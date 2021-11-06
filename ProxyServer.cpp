@@ -5,7 +5,6 @@
 #include <event2/listener.h>
 #include <event2/bufferevent.h>
 #include <event2/buffer.h>
-#include <iostream>
 
 #include "ProxyServer.h"
 
@@ -42,7 +41,7 @@ ProxyServer::ProxyServer(const std::string& proxyAddr, const std::string& server
     }
 
     // связываем слушателя с адресом и назначаем ему коллбэк для события нового подключения
-    connListener_ = evconnlistener_new_bind(eventBase_, acceptCb, NULL,
+    connListener_ = evconnlistener_new_bind(eventBase_, acceptCb, nullptr,
                                        LEV_OPT_CLOSE_ON_FREE | LEV_OPT_CLOSE_ON_EXEC | LEV_OPT_REUSEABLE,
                                             -1, (struct sockaddr*)&listenOnAddr_, listenOnAddrLen);
 
@@ -67,7 +66,7 @@ ProxyServer::~ProxyServer() {
 // 1 байт номер пакета
 // 1 байт идентификатор команды
 // COM_QUERY команда запроса
-bool is_sql_query(uint8_t *header) {
+bool ProxyServer::is_sql_query(const uint8_t *header) {
     uint8_t command = header[4];
     if ( command == COM_QUERY) {
         return true;
@@ -75,7 +74,7 @@ bool is_sql_query(uint8_t *header) {
     return false;
 }
 
-int query_length(uint8_t *header) {
+int ProxyServer::query_length(const uint8_t *header) {
     // 3 байта payload_length
     int len = ((int)header[0] | (int)header[1] << 8 | (int)header[2] << 16);
     return len;
@@ -83,7 +82,7 @@ int query_length(uint8_t *header) {
 
 
 // печатаем в консоль строку запроса
-void query_log(unsigned char *query) {
+void ProxyServer::query_log(unsigned char *query) {
     std::cout << query << std::endl;
 }
 
@@ -106,10 +105,10 @@ void ProxyServer::readCb(struct bufferevent *bev, void *ctx) {
 
     // копируем хедер
     evbuffer_copyout(src, header, HEADER_LENGTH);
-    if ( ::is_sql_query(header) ) {
-        int n = ::query_length(header) + 5;
+    if ( is_sql_query(header) ) {
+        int n = query_length(header) + 5;
         evbuffer_copyout(src, buffer, n < MAX_LENGTH_QUERY ? n : MAX_LENGTH_QUERY);
-        ::query_log(&buffer[5]);
+        query_log(&buffer[5]);
     }
 
     // копируем буффер входящего запроса в исходящий
@@ -118,7 +117,7 @@ void ProxyServer::readCb(struct bufferevent *bev, void *ctx) {
 }
 
 void ProxyServer::eventCb(struct bufferevent *bev, short what, void *ctx) {
-    struct bufferevent *partner = reinterpret_cast<struct bufferevent *>(ctx);
+    auto *partner = reinterpret_cast<struct bufferevent *>(ctx);
 
     // если соединение разорвано
     if ( what & (BEV_EVENT_EOF | BEV_EVENT_ERROR) ) {
@@ -161,8 +160,8 @@ void ProxyServer::acceptCb(struct evconnlistener *listener, evutil_socket_t fd, 
     // назначаем колбэки на каждый сокет
     // коллбэк одинаковый, но аргументы при вызове b_in, b_out
     // будут меняться местами при вызове на каждом из сокетов
-    bufferevent_setcb(b_in, readCb, NULL, eventCb, b_out);
-    bufferevent_setcb(b_out, readCb, NULL, eventCb, b_in);
+    bufferevent_setcb(b_in, readCb, nullptr, eventCb, b_out);
+    bufferevent_setcb(b_out, readCb, nullptr, eventCb, b_in);
 
     // включаем евенты при которых будет совершаться коллбэк
     bufferevent_enable(b_in, EV_READ|EV_WRITE);
