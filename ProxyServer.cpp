@@ -12,62 +12,53 @@
 #define MAX_LENGTH_QUERY 1024
 #define HEADER_LENGTH 5
 #define COM_QUERY 3
-#define COM_STMT_PREPARE 22
 
-// для работы libevent
-static struct event_base            *eventBase;
-static struct evconnlistener        *listener;
-static struct sockaddr_storage      listenOnAddr;
-static struct sockaddr_storage      connectToAddr;
-static int                          connectToAddrLen;
-
-// коллбэки для libevent
-static void readCb(struct bufferevent *bev, void *ctx);
-static void eventCb(struct bufferevent *bev, short what, void *ctx);
-static void acceptCb(struct evconnlistener *listener, evutil_socket_t fd,
-        struct sockaddr *a, int slen, void *p);
-
+struct event_base       *ProxyServer::eventBase_;
+struct evconnlistener   *ProxyServer::connListener_;
+struct sockaddr_storage ProxyServer::listenOnAddr_;
+struct sockaddr_storage ProxyServer::connectToAddr_;
+int                     ProxyServer::connectToAddrLen_;
 
 ProxyServer::ProxyServer(const std::string& proxyAddr, const std::string& serverAddr) {
     // парсим адрес формата "127.0.0.1:80" в структуру sockaddr
     int listenOnAddrLen = sizeof(struct sockaddr_storage);
-    memset(&listenOnAddr, 0, listenOnAddrLen);
+    memset(&listenOnAddr_, 0, listenOnAddrLen);
     if (evutil_parse_sockaddr_port(proxyAddr.c_str(),
-                                   (struct sockaddr*)&listenOnAddr, &listenOnAddrLen) < 0 ) {
+                                   (struct sockaddr*)&listenOnAddr_, &listenOnAddrLen) < 0 ) {
         throw std::runtime_error("Parse listen_addr fail");
     }
 
-    connectToAddrLen = sizeof(struct sockaddr_storage);
-    memset(&connectToAddr, 0, connectToAddrLen);
+    connectToAddrLen_ = sizeof(struct sockaddr_storage);
+    memset(&connectToAddr_, 0, connectToAddrLen_);
     if (evutil_parse_sockaddr_port(serverAddr.c_str(),
-                                   (struct sockaddr*)&connectToAddr, &connectToAddrLen) < 0 ) {
+                                   (struct sockaddr*)&connectToAddr_, &connectToAddrLen_) < 0 ) {
         throw std::runtime_error("Parse connect_addr fail");
     }
 
-    eventBase = event_base_new();
-    if ( !eventBase ) {
+    eventBase_ = event_base_new();
+    if ( !eventBase_ ) {
         perror("event_base_new()");
         throw std::runtime_error("Event base create fail");
     }
 
     // связываем слушателя с адресом и назначаем ему коллбэк для события нового подключения
-    listener = evconnlistener_new_bind(eventBase, acceptCb, NULL,
+    connListener_ = evconnlistener_new_bind(eventBase_, acceptCb, NULL,
                                        LEV_OPT_CLOSE_ON_FREE | LEV_OPT_CLOSE_ON_EXEC | LEV_OPT_REUSEABLE,
-                                       -1, (struct sockaddr*)&listenOnAddr, listenOnAddrLen);
+                                            -1, (struct sockaddr*)&listenOnAddr_, listenOnAddrLen);
 
-    if ( !listener ) {
+    if ( !connListener_ ) {
         throw std::runtime_error("Listener create fail");
     }
 
     // запукаем цикл обработки событий
-    event_base_dispatch(eventBase);
+    event_base_dispatch(eventBase_);
 }
 
 ProxyServer::~ProxyServer() {
     // завершаем цикл и чистим за собой
-    event_base_loopexit(eventBase, nullptr);
-    evconnlistener_free(listener);
-    event_base_free(eventBase);
+    event_base_loopexit(eventBase_, nullptr);
+    evconnlistener_free(connListener_);
+    event_base_free(eventBase_);
 }
 
 
@@ -96,7 +87,7 @@ void query_log(unsigned char *query) {
     std::cout << query << std::endl;
 }
 
-static void readCb(struct bufferevent *bev, void *ctx) {
+void ProxyServer::readCb(struct bufferevent *bev, void *ctx) {
     struct  bufferevent *partner;
     struct  evbuffer *src, *dst;
     size_t  len;
@@ -126,7 +117,7 @@ static void readCb(struct bufferevent *bev, void *ctx) {
     evbuffer_add_buffer(dst, src);
 }
 
-static void eventCb(struct bufferevent *bev, short what, void *ctx) {
+void ProxyServer::eventCb(struct bufferevent *bev, short what, void *ctx) {
     struct bufferevent *partner = reinterpret_cast<struct bufferevent *>(ctx);
 
     // если соединение разорвано
@@ -145,21 +136,22 @@ static void eventCb(struct bufferevent *bev, short what, void *ctx) {
     }
 }
 
+void ProxyServer::acceptCb(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *a, int slen, void *p) {
+    // не использую это, поэтому привел к void чтобы компилятор ворнингами не сыпал
+    (void)listener; (void)a; (void)slen; (void)p;
 
-static void acceptCb(struct evconnlistener *listener, evutil_socket_t fd,
-                                struct sockaddr *a, int slen, void *p) {
     struct bufferevent *b_out, *b_in;
 
     // принимаем новое соединение от клиента
-    b_in = bufferevent_socket_new(eventBase, fd, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
+    b_in = bufferevent_socket_new(eventBase_, fd, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
 
     // создаем новый сокет для подключения к серверу
-    b_out = bufferevent_socket_new(eventBase, -1, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
+    b_out = bufferevent_socket_new(eventBase_, -1, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
 
     assert(b_in && b_out);
 
     // соединяем b_out с адресом сервера
-    if (bufferevent_socket_connect(b_out, (struct sockaddr*)&connectToAddr, connectToAddrLen) < 0) {
+    if (bufferevent_socket_connect(b_out, (struct sockaddr*)&connectToAddr_, connectToAddrLen_) < 0) {
         perror("bufferevent_socket_connect");
         bufferevent_free(b_out);
         bufferevent_free(b_in);

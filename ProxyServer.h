@@ -17,6 +17,20 @@ public:
     ~ProxyServer();
     ProxyServer(const ProxyServer& proxyServer) = delete;
     ProxyServer &operator=(const ProxyServer& proxyServer) = delete;
+
+private:
+    // для работы libevent
+    static struct event_base            *eventBase_;
+    static struct evconnlistener        *connListener_;
+    static struct sockaddr_storage      listenOnAddr_;
+    static struct sockaddr_storage      connectToAddr_;
+    static int                          connectToAddrLen_;
+
+    // коллбэки для libevent
+    static void readCb(struct bufferevent *bev, void *ctx);
+    static void eventCb(struct bufferevent *bev, short what, void *ctx);
+    static void acceptCb(struct evconnlistener *listener, evutil_socket_t fd,
+            struct sockaddr *a, int slen, void *p);
 };
 
 
