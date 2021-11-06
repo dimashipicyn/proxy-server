@@ -9,6 +9,10 @@
 
 #include "ProxyServer.h"
 
+#define MAX_LENGTH_QUERY 1024
+#define HEADER_LENGTH 5
+#define COM_QUERY 3
+#define COM_STMT_PREPARE 22
 
 // для работы libevent
 static struct event_base            *eventBase;
@@ -18,7 +22,6 @@ static struct sockaddr_storage      connectToAddr;
 static int                          connectToAddrLen;
 
 // коллбэки для libevent
-static void writeCb(struct bufferevent *bev, void *ctx);
 static void readCb(struct bufferevent *bev, void *ctx);
 static void eventCb(struct bufferevent *bev, short what, void *ctx);
 static void acceptCb(struct evconnlistener *listener, evutil_socket_t fd,
@@ -26,7 +29,7 @@ static void acceptCb(struct evconnlistener *listener, evutil_socket_t fd,
 
 
 ProxyServer::ProxyServer(const std::string& proxyAddr, const std::string& serverAddr) {
-    // парсим адрес формата 127.0.0.1:80 в структуру sockaddr
+    // парсим адрес формата "127.0.0.1:80" в структуру sockaddr
     int listenOnAddrLen = sizeof(struct sockaddr_storage);
     memset(&listenOnAddr, 0, listenOnAddrLen);
     if (evutil_parse_sockaddr_port(proxyAddr.c_str(),
@@ -67,34 +70,79 @@ ProxyServer::~ProxyServer() {
     event_base_free(eventBase);
 }
 
-static void writeCb(struct bufferevent *bev, void *ctx) {
 
+// header
+// 3 байта длина запроса
+// 1 байт номер пакета
+// 1 байт идентификатор команды
+// COM_QUERY команда запроса
+bool is_sql_query(uint8_t *header) {
+    uint8_t command = header[4];
+    if ( command == COM_QUERY) {
+        return true;
+    }
+    return false;
+}
+
+int query_length(uint8_t *header) {
+    // 3 байта payload_length
+    int len = ((int)header[0] | (int)header[1] << 8 | (int)header[2] << 16);
+    return len;
+}
+
+
+// печатаем в консоль строку запроса
+void query_log(unsigned char *query) {
+    std::cout << query << std::endl;
 }
 
 static void readCb(struct bufferevent *bev, void *ctx) {
-    struct bufferevent *partner;
-    struct evbuffer *src, *dst;
-    size_t len;
+    struct  bufferevent *partner;
+    struct  evbuffer *src, *dst;
+    size_t  len;
+    uint8_t header[HEADER_LENGTH];
+    unsigned char buffer[MAX_LENGTH_QUERY + 1] = {0};
 
-    partner = reinterpret_cast<struct bufferevent *>(ctx);
     src = bufferevent_get_input(bev);
     len = evbuffer_get_length(src);
 
-    char buf[10000] = {0};
-    evbuffer_copyout(src, buf, len);
-    std::cout << "Len: " << len << std::endl;
-    //std::cout << buf;
-    int n = (buf[0] | (int)buf[1] << 8 | (int)buf[2] << 16);
-    int q = buf[4];
-    std::cout << "lenght " << n << " query " << q << std::endl;
+    partner = reinterpret_cast<struct bufferevent *>(ctx);
+    if (!partner) {
+        // чистим буфер
+        evbuffer_drain(src, len);
+        return;
+    }
+
+    // копируем хедер
+    evbuffer_copyout(src, header, HEADER_LENGTH);
+    if ( ::is_sql_query(header) ) {
+        int n = ::query_length(header) + 5;
+        evbuffer_copyout(src, buffer, n < MAX_LENGTH_QUERY ? n : MAX_LENGTH_QUERY);
+        ::query_log(&buffer[5]);
+    }
+
+    // копируем буффер входящего запроса в исходящий
     dst = bufferevent_get_output(partner);
     evbuffer_add_buffer(dst, src);
-    std::cout << "Call readcb" << std::endl;
 }
 
 static void eventCb(struct bufferevent *bev, short what, void *ctx) {
     struct bufferevent *partner = reinterpret_cast<struct bufferevent *>(ctx);
-    std::cout << "Eventcb call" << std::endl;
+
+    // если соединение разорвано
+    if ( what & (BEV_EVENT_EOF | BEV_EVENT_ERROR) ) {
+        if (partner) {
+            // дочитываем все что осталось
+            readCb(bev, ctx);
+
+            if ( evbuffer_get_length(bufferevent_get_output(partner)) > 0 ) {
+                bufferevent_disable(partner, EV_READ);
+            } else {
+                bufferevent_free(partner);
+            }
+        }
+        bufferevent_free(bev);
+    }
 }
 
 

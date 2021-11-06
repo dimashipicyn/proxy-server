@@ -15,6 +15,8 @@ public:
 
     ProxyServer(const std::string& proxyAddr, const std::string& serverAddr);
     ~ProxyServer();
+    ProxyServer(const ProxyServer& proxyServer) = delete;
+    ProxyServer &operator=(const ProxyServer& proxyServer) = delete;
 };
 
 
