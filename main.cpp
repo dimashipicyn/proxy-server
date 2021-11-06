@@ -1,4 +1,5 @@
 #include <iostream>
+#include "ProxyServer.h"
 
 int main(int argc, char *argv[])
 {
@@ -11,6 +12,13 @@ int main(int argc, char *argv[])
     std::string listenAddr(argv[1]);
     std::string connectAddr(argv[2]);
 
+    try {
+        ProxyServer proxyServer(listenAddr, connectAddr);
+    }
+    catch (std::exception &e) {
+        std::cout << "Server start fail!" << std::endl;
+        std::cout << e.what() << std::endl;
+    }
 
     return 0;
 }
